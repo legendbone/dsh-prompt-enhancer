@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Prompt Enhancer",
+    "description": "Adds a sparkle button to the composer that improves and refills plain-text prompts with the current model."
+  }
+}
