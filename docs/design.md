@@ -33,7 +33,7 @@
 
 ## 文件位置
 
-- 插件包：`dsh-plugins/prompt-enhancer/`
+- 插件包：`dsh-plugins/dsh-prompt-enhancer/`
 - Host：`index.js`，负责模型调用和 Remote 服务注册。
 - Client：`client.js`，负责 Remote 挂载、按钮渲染和草稿回写。
 - 清单与资源：`package.json`、`cordis.patch.yml`、`locale/`、`icon.svg`。
@@ -50,7 +50,7 @@
 
 - 已通过 Host、Client、RemoteInfo 的 JavaScript 语法检查和中英文 JSON 资源检查。
 - 已通过模拟 LLM 流测试：正文组装、完整代码围栏移除、空结果拒绝、提供商错误透传。
-- 插件已安装并启用到当前 `desktop` 配置，`conversation.input.right` 中存在 active 的 `prompt-enhancer` 注册。
+- 插件已安装并启用到当前 `desktop` 配置，`conversation.input.right` 中存在 active 的 `dsh-prompt-enhancer` 注册。
 - 已修复首次安装时插件本地 `zod` 依赖缺失，以及动态 Remote 命名空间必须通过 `ctx.get()` 读取的问题。
 - 当前环境没有浏览器点击与截图控制能力；按钮实际视觉位置、真实模型点击调用和草稿回填仍需在当前 GUI 人工验证。
 
@@ -158,3 +158,13 @@ node /Users/mac/.dsh/dsh-runtimes/dsh-primary-runtime/dependencies/pnpm/bin/pnpm
 待人工验证：重启后新建会话输入纯文本，按钮应可点击；若点击后弹出错误提示，请把提示文字发我以便继续定位。
 
 补充（1.1.4）：为保证点击期兜底可用，模块 `inject` 增加 `remote.session`（与 `dsh-client-ui-model-selection` 的 ModelDirectoryResolver 一致），确保 `ctx.remote.session.modelCatalog()` 已就绪。重新打包安装 1.1.4；安装副本 `client.js` sha256 为 `c36e3d9…`，与仓库一致。
+
+## 2026-11-09 变更：项目重命名为 dsh-prompt-enhancer
+
+按用户要求，工程名称由 `prompt-enhancer` 改为 `dsh-prompt-enhancer`，GitHub 仓库同步重命名为 `legendbone/dsh-prompt-enhancer`。
+
+- npm 包名：`@local/prompt-enhancer` → `@local/dsh-prompt-enhancer`。
+- 插件 id（cordis patch id / client slot id）：`prompt-enhancer` → `dsh-prompt-enhancer`。
+- README 标题与安装说明同步更新。
+- 内部 service 命名空间（`promptEnhancer`、`promptEnhancer/enhance`）保持不变，避免改动现有 Remote 契约。
+- 上文中 2026-11-02 至 2026-11-03 的历史记录保持原样（记录的是当时真实的路径与包名）。

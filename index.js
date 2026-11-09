@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { createTypertRemoteInfo } from './remote-info.js'
 
-const PACKAGE = '@local/prompt-enhancer'
+const PACKAGE = '@local/dsh-prompt-enhancer'
 const SYSTEM_PROMPT = `你是一名提示词优化助手。请优化用户提供的提示词，使其更清晰、具体、可执行，同时严格遵守以下规则：
 1. 保留原始意图、语言、业务含义和已有约束，不改变任务目标。
 2. 不虚构背景、需求、限制、示例或验收标准；缺少的信息不要擅自补全。
@@ -156,5 +156,5 @@ function createService(ctx) {
 
 export function apply(ctx) {
   ctx.provide(SERVICE_KEY, createService(ctx))
-  ctx.effect(() => ctx.typert.register(TYPERT), 'prompt-enhancer: Remote descriptors')
+  ctx.effect(() => ctx.typert.register(TYPERT), 'dsh-prompt-enhancer: Remote descriptors')
 }

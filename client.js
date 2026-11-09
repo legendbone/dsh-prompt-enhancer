@@ -1,11 +1,11 @@
 window.__ModuleLoader__.load({
-  id: '@local/prompt-enhancer',
+  id: '@local/dsh-prompt-enhancer',
   factory(require) {
     const React = require('react')
     const zod = require('zod')
     const z = zod.z
     const h = React.createElement
-    const PACKAGE = '@local/prompt-enhancer'
+    const PACKAGE = '@local/dsh-prompt-enhancer'
     const NS = 'promptEnhancer'
 
     // Package-local copy of the pure Typert RemoteInfo contract (MIT).
@@ -332,10 +332,10 @@ window.__ModuleLoader__.load({
       inject: ['remote', 'remote.session', 'slots', 'locale'],
       async apply(ctx) {
         const unmount = await ctx.remote.$mount(REMOTE)
-        ctx.effect(() => unmount, 'prompt-enhancer: Remote mount')
+        ctx.effect(() => unmount, 'dsh-prompt-enhancer: Remote mount')
         const remote = ctx.get('remote.promptEnhancer')
-        if (remote === undefined) throw new Error('prompt-enhancer: Remote namespace unavailable after mount')
-        ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'prompt-enhancer: dictionaries')
+        if (remote === undefined) throw new Error('dsh-prompt-enhancer: Remote namespace unavailable after mount')
+        ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'dsh-prompt-enhancer: dictionaries')
         const t = ctx.locale.bind(NS)
         // Click-time fallback: read the host model catalog's default route when the
         // session's projected selection (and the per-session directory) are unavailable.
@@ -353,7 +353,7 @@ window.__ModuleLoader__.load({
         const Button = createButton(remote, t, () => ctx.get('modelDirectories'), resolveDefaultModel)
         ctx.slots.inject('conversation.input.right', () => ctx.slots.register({
           name: 'conversation.input.right',
-          id: 'prompt-enhancer',
+          id: 'dsh-prompt-enhancer',
           order: -10,
           locale: NS,
         }, Button))

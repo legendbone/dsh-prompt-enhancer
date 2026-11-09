@@ -1,4 +1,4 @@
-# Prompt Enhancer for DeepSeek Harness
+# DSH Prompt Enhancer for DeepSeek Harness
 
 一个 DeepSeek Harness 持久化插件：在聊天输入框工具栏添加星光按钮，使用当前会话选择的模型优化提示词，并将结果回填到输入框。
 
@@ -51,7 +51,7 @@ node --check client.js
 
 ## 安装到 Harness
 
-在 Harness 插件管理器中选择从本地目录安装，并选择本仓库根目录。安装后启用 `@local/prompt-enhancer`。
+在 Harness 插件管理器中选择从本地目录安装，并选择本仓库根目录。安装后启用 `@local/dsh-prompt-enhancer`。
 
 也可以由具备 Harness 插件工具的智能体调用 `plugin_manager.install_bundle`，将仓库绝对路径作为 `target`。
 
