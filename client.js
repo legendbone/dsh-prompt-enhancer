@@ -196,16 +196,38 @@ window.__ModuleLoader__.load({
         h('circle', { cx: 10, cy: 10, r: 7, fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeDasharray: '28 16', strokeLinecap: 'round' }))
     }
 
-    function createButton(remote, t) {
+    function createButton(remote, t, getModels, resolveDefaultModel) {
       return function PromptEnhancerButton(props) {
         const input = props.useInput(value => value)
-        const selection = props.useProjection('modelSelection', value => value?.next ?? value?.lastUsed)
+        // Resolve the composer's per-session model directory — the same store the native
+        // model seat renders from. Its snapshot already falls back to the catalog default,
+        // whereas the raw `modelSelection` projection stays empty for a brand-new session
+        // until its first message. That gap is why the button used to be disabled in new
+        // conversations. Service lookup is lazy + defensive so a missing service only
+        // degrades to the projection fallback instead of blocking the plugin.
+        const modelDirectory = React.useMemo(() => {
+          const models = getModels()
+          if (models === undefined) return undefined
+          try {
+            return models.directoryFor(props.sessionId)
+          } catch {
+            return undefined
+          }
+        }, [getModels, props.sessionId])
+        const directory = modelDirectory === undefined ? undefined : modelDirectory.store
+        const subscribe = React.useCallback(listener => directory === undefined ? () => {} : directory.subscribe(listener), [directory])
+        const getSnapshot = React.useCallback(() => directory === undefined ? undefined : directory.getSnapshot(), [directory])
+        const modelState = React.useSyncExternalStore(subscribe, getSnapshot)
+        const projected = props.useProjection('modelSelection', value => value?.next ?? value?.lastUsed)
+        const selection = (modelState === undefined ? undefined : modelState.current) ?? projected
+        const reasoningEffort = selection?.reasoningEffort ?? modelState?.retainedEffort
         const [pending, setPending] = React.useState(false)
         const [notice, setNotice] = React.useState(null)
         const abortRef = React.useRef(null)
         const latest = React.useRef({ input, sessionId: props.sessionId })
         latest.current = { input, sessionId: props.sessionId }
 
+        React.useEffect(() => { modelDirectory?.load().catch(() => {}) }, [modelDirectory])
         React.useEffect(() => () => abortRef.current?.abort(), [])
         React.useEffect(() => {
           if (notice === null) return undefined
@@ -215,7 +237,11 @@ window.__ModuleLoader__.load({
 
         const hasReferences = (input?.occurrences?.length ?? 0) > 0
         const plain = input?.phase === 'plain' && !hasReferences
-        const disabled = pending || !plain || !props.inputActions || !selection || !input || input.draft.trim() === ''
+        // Keep the button enabled as soon as there is a plain draft. Model resolution is
+        // deferred to click time with a catalog-default fallback, so a blank new session
+        // (empty modelSelection projection + possibly unavailable directory store) no
+        // longer leaves the button permanently greyed out.
+        const disabled = pending || !input || input.draft.trim() === ''
         const label = pending ? t('pending') : hasReferences ? t('plainTextOnly') : t('action')
 
         const onClick = async () => {
@@ -230,12 +256,29 @@ window.__ModuleLoader__.load({
           setPending(true)
           setNotice(null)
           try {
+            if (!plain) {
+              setNotice({ tone: 'warning', text: t('plainTextOnly') })
+              return
+            }
+            if (!props.inputActions) {
+              setNotice({ tone: 'error', text: `${t('failed')}：无法写入输入框` })
+              return
+            }
+            let chosen = selection
+            if (chosen === undefined) {
+              try { chosen = await resolveDefaultModel() } catch { chosen = undefined }
+            }
+            if (chosen === undefined || chosen.provider === undefined || chosen.model === undefined) {
+              setNotice({ tone: 'error', text: `${t('failed')}：无法确定当前模型，请先在模型选择器中选择模型` })
+              return
+            }
+            const chosenEffort = chosen.reasoningEffort ?? reasoningEffort
             const carried = await remote.enhance({
               sessionId: original.sessionId,
               prompt: original.draft,
-              provider: selection.provider,
-              model: selection.model,
-              ...(selection.reasoningEffort === undefined ? {} : { reasoningEffort: selection.reasoningEffort }),
+              provider: chosen.provider,
+              model: chosen.model,
+              ...(chosenEffort === undefined ? {} : { reasoningEffort: chosenEffort }),
             }, controller.signal)
             if (controller.signal.aborted) return
             if (!carried.ok) {
@@ -286,7 +329,7 @@ window.__ModuleLoader__.load({
     }
 
     return {
-      inject: ['remote', 'slots', 'locale'],
+      inject: ['remote', 'remote.session', 'slots', 'locale'],
       async apply(ctx) {
         const unmount = await ctx.remote.$mount(REMOTE)
         ctx.effect(() => unmount, 'prompt-enhancer: Remote mount')
@@ -294,7 +337,20 @@ window.__ModuleLoader__.load({
         if (remote === undefined) throw new Error('prompt-enhancer: Remote namespace unavailable after mount')
         ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'prompt-enhancer: dictionaries')
         const t = ctx.locale.bind(NS)
-        const Button = createButton(remote, t)
+        // Click-time fallback: read the host model catalog's default route when the
+        // session's projected selection (and the per-session directory) are unavailable.
+        const resolveDefaultModel = async () => {
+          const res = await ctx.remote.session.modelCatalog()
+          if (res === undefined || res.ok === false) return undefined
+          const d = res.value === undefined ? undefined : res.value.default
+          if (d === undefined || d.provider === undefined || d.model === undefined) return undefined
+          return {
+            provider: d.provider,
+            model: d.model,
+            ...(d.reasoningEffort === undefined ? {} : { reasoningEffort: d.reasoningEffort }),
+          }
+        }
+        const Button = createButton(remote, t, () => ctx.get('modelDirectories'), resolveDefaultModel)
         ctx.slots.inject('conversation.input.right', () => ctx.slots.register({
           name: 'conversation.input.right',
           id: 'prompt-enhancer',

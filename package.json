@@ -1,6 +1,6 @@
 {
   "name": "@local/prompt-enhancer",
-  "version": "1.0.0",
+  "version": "1.1.4",
   "private": true,
   "description": "Adds a prompt enhancement button to the Harness message composer.",
   "type": "module",
@@ -31,7 +31,8 @@
       "inject": [
         "@deepseek-ai/dsh-api-remotes",
         "@deepseek-ai/dsh-client-locale",
-        "@deepseek-ai/dsh-client-ui-conversation"
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-model-selection"
       ]
     }
   }

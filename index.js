@@ -126,9 +126,35 @@ async function enhance(ctx, request, signal) {
 
 export const inject = ['llm', 'typert']
 
-export function apply(ctx) {
-  ctx.provide('promptEnhancer', {
+const SERVICE_KEY = 'promptEnhancer'
+
+/**
+ * Build the Host Service and attach its visible Typert Gateway binding.
+ *
+ * The Gateway resolves the live receiver with `ctx.get(serviceKey)` and then
+ * requires an inspectable `typertRemote` binding whose `service` identity is
+ * that same provided object (`gateway/binding-invalid` otherwise). A plain
+ * `ctx.provide()` value carries no such binding, so we declare one explicitly,
+ * mirroring `bindTypertRemote(service, serviceKey)` from the Typert protocol.
+ */
+function createService(ctx) {
+  const service = {
     enhance: (request, signal) => enhance(ctx, request, signal),
+  }
+  Object.defineProperty(service, 'typertRemote', {
+    value: Object.freeze({
+      service,
+      serviceKey: SERVICE_KEY,
+      namespace: SERVICE_KEY,
+    }),
+    enumerable: true,
+    writable: false,
+    configurable: false,
   })
+  return service
+}
+
+export function apply(ctx) {
+  ctx.provide(SERVICE_KEY, createService(ctx))
   ctx.effect(() => ctx.typert.register(TYPERT), 'prompt-enhancer: Remote descriptors')
 }
