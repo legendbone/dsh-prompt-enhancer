@@ -9,6 +9,39 @@ const SYSTEM_PROMPT = `你是一名提示词优化助手。请优化用户提供
 4. 删除冗余表达，保持简洁，不为了显得专业而堆砌术语。
 5. 只输出优化后的提示词正文，不要解释、评价、添加标题或前后缀，不要使用 Markdown 代码围栏。`
 
+// Per-request output budget: scale with the draft length so short prompts stay cheap
+// while long prompts keep enough room, then clamp to [MIN, MAX]. The ceiling also marks
+// the point past which a longer input no longer buys more output room (see MAX_INPUT_TOKENS).
+const MIN_OUTPUT_TOKENS = 1024
+const MAX_OUTPUT_TOKENS = 4096
+const OUTPUT_TOKEN_MULTIPLIER = 2.5
+// Drafts longer than this cannot be given a proportional output budget (the budget is
+// already saturated at MAX_OUTPUT_TOKENS), so we reject them up front instead of letting
+// generation run into the `max-tokens` wall.
+const MAX_INPUT_TOKENS = Math.floor(MAX_OUTPUT_TOKENS / OUTPUT_TOKEN_MULTIPLIER)
+
+// Rough token estimate without a tokenizer: CJK / fullwidth glyphs count as ~1 token,
+// other characters as ~1 token per 4. Deliberately conservative and only used to size
+// budgets and the input gate, never for billing or exact accounting.
+function estimateTokens(text) {
+  if (!text) return 0
+  let weighted = 0
+  for (const char of text) {
+    const code = char.codePointAt(0)
+    const wide = (code >= 0x2e80 && code <= 0x9fff) || // CJK radicals, punctuation, ideographs
+      (code >= 0xac00 && code <= 0xd7af) || // Hangul
+      (code >= 0xf900 && code <= 0xfaff) || // CJK compatibility ideographs
+      (code >= 0xff00 && code <= 0xffef) // Fullwidth forms
+    weighted += wide ? 1 : 0.25
+  }
+  return Math.ceil(weighted)
+}
+
+function outputTokenBudget(text) {
+  const estimated = estimateTokens(text)
+  return Math.min(MAX_OUTPUT_TOKENS, Math.max(MIN_OUTPUT_TOKENS, Math.ceil(estimated * OUTPUT_TOKEN_MULTIPLIER)))
+}
+
 const requestSchema = () => z.object({
   sessionId: z.string().min(1),
   prompt: z.string().min(1),
@@ -84,10 +117,15 @@ function normalizeOutput(text) {
 
 async function enhance(ctx, request, signal) {
   try {
+    // Fail fast on oversized drafts: the output budget is already saturated for these,
+    // so enhancing them would most likely end in a `max-tokens` truncation anyway.
+    if (estimateTokens(request.prompt) > MAX_INPUT_TOKENS) {
+      return failure('input-too-long', 'The prompt is too long to enhance; please split it into smaller parts.')
+    }
     const config = {
       provider: request.provider,
       model: request.model,
-      maxTokens: 2048,
+      maxTokens: outputTokenBudget(request.prompt),
       ...(request.reasoningEffort === undefined ? {} : { reasoningEffort: request.reasoningEffort }),
     }
     const prepared = await ctx.llm.prepareCall(config, signal)

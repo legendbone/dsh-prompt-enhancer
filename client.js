@@ -8,6 +8,26 @@ window.__ModuleLoader__.load({
     const PACKAGE = '@local/dsh-prompt-enhancer'
     const NS = 'promptEnhancer'
 
+    // Kept in sync with index.js. The Host computes the actual output budget; the Client
+    // only needs the same gate threshold to warn about oversized drafts before a request.
+    const MAX_OUTPUT_TOKENS = 4096
+    const OUTPUT_TOKEN_MULTIPLIER = 2.5
+    const MAX_INPUT_TOKENS = Math.floor(MAX_OUTPUT_TOKENS / OUTPUT_TOKEN_MULTIPLIER)
+
+    function estimateTokens(text) {
+      if (!text) return 0
+      let weighted = 0
+      for (const char of text) {
+        const code = char.codePointAt(0)
+        const wide = (code >= 0x2e80 && code <= 0x9fff) ||
+          (code >= 0xac00 && code <= 0xd7af) ||
+          (code >= 0xf900 && code <= 0xfaff) ||
+          (code >= 0xff00 && code <= 0xffef)
+        weighted += wide ? 1 : 0.25
+      }
+      return Math.ceil(weighted)
+    }
+
     // Package-local copy of the pure Typert RemoteInfo contract (MIT).
     class RemoteInfo {
       constructor(spec, runtime) {
@@ -153,6 +173,7 @@ window.__ModuleLoader__.load({
       action: '增强提示词',
       pending: '正在增强提示词',
       plainTextOnly: '仅支持增强纯文本提示词',
+      tooLong: '草稿过长，请分段增强',
       success: '已增强提示词',
       draftChanged: '文本已修改，未覆盖当前内容',
       failed: '提示词增强失败',
@@ -161,6 +182,7 @@ window.__ModuleLoader__.load({
       action: 'Enhance prompt',
       pending: 'Enhancing prompt',
       plainTextOnly: 'Only plain-text prompts can be enhanced',
+      tooLong: 'Draft is too long; please split it into smaller parts',
       success: 'Prompt enhanced',
       draftChanged: 'Draft changed; your current text was preserved',
       failed: 'Could not enhance prompt',
@@ -237,15 +259,20 @@ window.__ModuleLoader__.load({
 
         const hasReferences = (input?.occurrences?.length ?? 0) > 0
         const plain = input?.phase === 'plain' && !hasReferences
+        const tooLong = estimateTokens(input?.draft ?? '') > MAX_INPUT_TOKENS
         // Keep the button enabled as soon as there is a plain draft. Model resolution is
         // deferred to click time with a catalog-default fallback, so a blank new session
         // (empty modelSelection projection + possibly unavailable directory store) no
         // longer leaves the button permanently greyed out.
         const disabled = pending || !input || input.draft.trim() === ''
-        const label = pending ? t('pending') : hasReferences ? t('plainTextOnly') : t('action')
+        const label = pending ? t('pending') : hasReferences ? t('plainTextOnly') : tooLong ? t('tooLong') : t('action')
 
         const onClick = async () => {
           if (disabled) return
+          if (tooLong) {
+            setNotice({ tone: 'warning', text: t('tooLong') })
+            return
+          }
           const original = {
             sessionId: props.sessionId,
             draft: input.draft,

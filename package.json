@@ -1,6 +1,6 @@
 {
   "name": "@local/dsh-prompt-enhancer",
-  "version": "1.1.4",
+  "version": "1.2.0",
   "private": true,
   "description": "Adds a prompt enhancement button to the Harness message composer.",
   "type": "module",

@@ -20,7 +20,8 @@
 ## 模型请求约束
 
 - 系统指令要求保留原始意图、语言和约束，不虚构需求，只返回优化后的提示词正文。
-- 输出上限为 2048 tokens。
+- 输出上限按输入长度动态估算：`min(4096, max(1024, ceil(估算输入 tokens × 2.5)))`——短草稿更省 token，长草稿自动留余量。
+- 估算输入超过 1638 tokens（约 1600 汉字或 1200 英文单词）时前置拦截，提示“草稿过长，请分段增强”，不发起模型请求。
 - Host 仅移除完整包裹输出的 Markdown 代码围栏；不追加解释、前缀或其他内容。
 - 该请求是用户主动触发的辅助转换，不进入聊天消息流，不唤醒 Agent，也不改变会话模型选择。
 - 模型调用仍会产生对应提供商的 token 消耗。
@@ -168,3 +169,21 @@ node /Users/mac/.dsh/dsh-runtimes/dsh-primary-runtime/dependencies/pnpm/bin/pnpm
 - README 标题与安装说明同步更新。
 - 内部 service 命名空间（`promptEnhancer`、`promptEnhancer/enhance`）保持不变，避免改动现有 Remote 契约。
 - 上文中 2026-11-02 至 2026-11-03 的历史记录保持原样（记录的是当时真实的路径与包名）。
+
+## 2026-11-09 变更：输出上限随输入动态调整 + 草稿过长前置拦截（版本 1.2.0）
+
+背景：原先输出上限写死 2048 tokens（`index.js` 中 `maxTokens: 2048`）。固定上限与输入长度无关：短草稿浪费额度，长草稿一旦输出超限就走 `max-tokens` 整单失败。按建议改为随输入动态预算，并加一道输入闸门。
+
+改动：
+- `index.js`：新增 `estimateTokens()`（CJK/全角字符≈1 token/字，其他字符≈1 token/4 字符）、`outputTokenBudget()`（`min(4096, max(1024, ceil(est × 2.5)))`），以及 `MAX_INPUT_TOKENS = floor(4096 / 2.5) = 1638`。`enhance()` 的 `maxTokens` 改为 `outputTokenBudget(request.prompt)`；调用 LLM 前对 `estimateTokens(request.prompt) > MAX_INPUT_TOKENS` 返回 `input-too-long`，避免生成撞到 `max-tokens` 才失败。
+- `client.js`：内置同样的 `estimateTokens()` 与 `MAX_INPUT_TOKENS`；渲染期计算 `tooLong` 用于悬停提示（`label` 优先显示该提示），点击命中 `tooLong` 时直接弹“草稿过长，请分段增强”且不发起请求；中英文字典新增 `tooLong`。
+- 保留原有 `max-tokens` 显式失败语义（输出超限时不覆盖原草稿），Host 侧 `input-too-long` 作为客户端闸门之外的兜底。
+
+验证：
+- `node --check index.js`、`node --check client.js`、`node --check remote-info.js` 全部通过。
+- 抽取 `index.js` 中的估算/预算函数做数值验证：
+  - 常量 `MIN=1024 / MAX=4096 / MULT=2.5 / MAX_INPUT=1638`。
+  - 空或短草稿 → 1024（比旧的 2048 更省）；600 汉字 → 1500；1600 汉字 → 4000；1700 汉字 → 预算封顶 4096 且 `gated=true`；2000 英文符 → 估算 500、预算 1250。
+  - 边界：`est=1638` 不拦截、`est=1639` 拦截，预算在 `MAX_INPUT_TOKENS` 处已达 4095（≈ 上限），与设计自洽。
+
+待人工验证：重新 `npm pack` 装入 profile 并重启 DSH 后，在新建会话分别输入短草稿（应正常回填、预算 1024）与超长草稿（点击即提示“草稿过长，请分段增强”且不发请求）各验证一次。
