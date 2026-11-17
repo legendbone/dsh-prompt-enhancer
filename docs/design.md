@@ -20,7 +20,7 @@
 ## 模型请求约束
 
 - 系统指令要求保留原始意图、语言和约束，不虚构需求，只返回优化后的提示词正文。
-- 输出上限按输入长度动态估算：`min(4096, max(1024, ceil(估算输入 tokens × 2.5)))`——短草稿更省 token，长草稿自动留余量。
+- 生成上限按“输出部分 + 推理头部余量”估算：输出部分 `min(4096, max(1024, ceil(估算输入 tokens × 2.5)))`，再叠加 `REASONING_HEADROOM_TOKENS = 4096` 的思考预算，整体封顶 `MAX_TOTAL_TOKENS = 16384`。`maxTokens` 是包含推理/思考 token 的总上限，因此必须为推理模型预留思考开销，否则输出会被截断（见 2026-11-17 修复记录）。
 - 估算输入超过 1638 tokens（约 1600 汉字或 1200 英文单词）时前置拦截，提示“草稿过长，请分段增强”，不发起模型请求。
 - Host 仅移除完整包裹输出的 Markdown 代码围栏；不追加解释、前缀或其他内容。
 - 该请求是用户主动触发的辅助转换，不进入聊天消息流，不唤醒 Agent，也不改变会话模型选择。
@@ -187,3 +187,36 @@ node /Users/mac/.dsh/dsh-runtimes/dsh-primary-runtime/dependencies/pnpm/bin/pnpm
   - 边界：`est=1638` 不拦截、`est=1639` 拦截，预算在 `MAX_INPUT_TOKENS` 处已达 4095（≈ 上限），与设计自洽。
 
 待人工验证：重新 `npm pack` 装入 profile 并重启 DSH 后，在新建会话分别输入短草稿（应正常回填、预算 1024）与超长草稿（点击即提示“草稿过长，请分段增强”且不发请求）各验证一次。
+
+## 2026-11-17 修复：推理 token 挤占输出预算导致 max-tokens 失败（版本 1.2.1）
+
+现象：用户点击「增强提示词」后提示「提示词增强失败：The enhanced prompt reached the output token limit.」（运行版本 1.1.4，截图见 m00001）。1.1.4 的 `index.js` 把 `maxTokens` 写死为 `2048`。
+
+根因：Provider 的 `maxTokens` 是**生成 token 总上限，包含推理/思考 token**，不只是回填正文。用户当前模型（如 Kimi K3.1 Pro，选择 `high` 推理档）单次增强会先花掉约 1k–2k 思考 token，再开始输出；固定 2048 的预算在思考后所剩无几，正文被截断，provider 返回 stopReason `length` → `dsh-llm-pi-ai` 映射为 `{kind:'max-tokens'}` → 插件报上面的错误。
+
+实证（直连本地 magpie 网关 `http://127.0.0.1:3425/v1/chat/completions`，`reasoning_effort=high`）：
+- 813 字草稿 + `max_tokens=2048` → `finish_reason=length`，`completion_tokens=2048`（其中 `reasoning_tokens=1379`），正文仅 1212 字即被截断。
+- 同一 813 字草稿 + `max_tokens=8192` → `finish_reason=stop`，`completion_tokens=2928`（`reasoning_tokens=1847`），正文 1915 字，正常。
+- 873 字草稿 + `max_tokens=8192` → `stop`，`reasoning_tokens=725`，正文 2251 字。
+- 复盘：1.2.0 的纯动态预算对该 813 字草稿只给到 `ceil(813×2.5)=2033`，同样会被思考 token 吃穿，因此 1.2.0 并未真正修好这个场景。
+
+修复（`index.js`，版本 1.2.1）：`outputTokenBudget()` 在原有按输入估算的输出预算之上，叠加固定的 `REASONING_HEADROOM_TOKENS = 4096` 思考余量，再用 `MAX_TOTAL_TOKENS = 16384` 整体封顶：
+
+```
+outputBudget = min(4096, max(1024, ceil(估算输入 tokens × 2.5)))
+maxTokens    = min(16384, outputBudget + 4096)
+```
+
+输出部分的下限/上限与 `MAX_INPUT_TOKENS = 1638` 输入闸门保持不变；`client.js` 只用于前置闸门，无需改动。`max-tokens` 显式失败语义保留为最后兜底。
+
+数值验证（按新公式）：
+- 空/短草稿 → 1024 + 4096 = 5120。
+- 813 字 → 2033 + 4096 = 6129（> 实测所需的 2928）。
+- 1638 字（闸门边界）→ 4096 + 4096 = 8192。
+- 均 ≤ 16384，且都能覆盖“思考 + 正文”。
+
+其它验证：
+- `node --check index.js`、`node --check client.js`、`node --check remote-info.js` 通过。
+- `npm pack` 生成 `dist/local-dsh-prompt-enhancer-1.2.1.tgz`，装入 profile `vendor/`，profile `package.json` 依赖改为 1.2.1，pnpm 重新安装为真实目录；安装副本与仓库一致。
+
+待人工验证：重启 DeepSeek Harness（Host 端在进程启动时加载）后，用当前 Kimi K3.1 Pro（High）在新建会话输入中长纯文本草稿点击星光按钮，确认正常回填、不再出现 max-tokens 失败。

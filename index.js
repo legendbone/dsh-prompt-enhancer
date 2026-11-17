@@ -9,14 +9,24 @@ const SYSTEM_PROMPT = `你是一名提示词优化助手。请优化用户提供
 4. 删除冗余表达，保持简洁，不为了显得专业而堆砌术语。
 5. 只输出优化后的提示词正文，不要解释、评价、添加标题或前后缀，不要使用 Markdown 代码围栏。`
 
-// Per-request output budget: scale with the draft length so short prompts stay cheap
-// while long prompts keep enough room, then clamp to [MIN, MAX]. The ceiling also marks
-// the point past which a longer input no longer buys more output room (see MAX_INPUT_TOKENS).
-const MIN_OUTPUT_TOKENS = 1024
-const MAX_OUTPUT_TOKENS = 4096
+// Per-request generation budget. The value we hand the provider as `maxTokens` caps ALL
+// generated tokens — reasoning/thinking tokens included, not just the rewritten prompt. A
+// reasoning model (e.g. Kimi K3.1 Pro at a "high" effort) routinely spends 1k-2k thinking
+// tokens before emitting a single output token, so a budget sized only from the draft length
+// silently truncates the answer and the provider reports `length` (→ our `max-tokens`
+// failure). Reserve explicit headroom for reasoning on top of a proportional output estimate,
+// then clamp the whole thing to an absolute ceiling.
+const MIN_OUTPUT_TOKENS = 1024 // floor for the rewritten prompt itself
+const MAX_OUTPUT_TOKENS = 4096 // ceiling for the rewritten prompt itself
 const OUTPUT_TOKEN_MULTIPLIER = 2.5
-// Drafts longer than this cannot be given a proportional output budget (the budget is
-// already saturated at MAX_OUTPUT_TOKENS), so we reject them up front instead of letting
+// Thinking tokens the model may spend before producing output. Sized to cover the high/max
+// efforts of the reasoning models offered in settings; the actual amount varies per request,
+// so this is a generous reserve rather than a tight match.
+const REASONING_HEADROOM_TOKENS = 4096
+// Absolute ceiling on the whole generation budget (prompt rewrite + reasoning headroom).
+const MAX_TOTAL_TOKENS = 16384
+// Drafts longer than this cannot be given a proportional output budget (the output portion
+// is already saturated at MAX_OUTPUT_TOKENS), so we reject them up front instead of letting
 // generation run into the `max-tokens` wall.
 const MAX_INPUT_TOKENS = Math.floor(MAX_OUTPUT_TOKENS / OUTPUT_TOKEN_MULTIPLIER)
 
@@ -39,7 +49,8 @@ function estimateTokens(text) {
 
 function outputTokenBudget(text) {
   const estimated = estimateTokens(text)
-  return Math.min(MAX_OUTPUT_TOKENS, Math.max(MIN_OUTPUT_TOKENS, Math.ceil(estimated * OUTPUT_TOKEN_MULTIPLIER)))
+  const outputBudget = Math.min(MAX_OUTPUT_TOKENS, Math.max(MIN_OUTPUT_TOKENS, Math.ceil(estimated * OUTPUT_TOKEN_MULTIPLIER)))
+  return Math.min(MAX_TOTAL_TOKENS, outputBudget + REASONING_HEADROOM_TOKENS)
 }
 
 const requestSchema = () => z.object({
